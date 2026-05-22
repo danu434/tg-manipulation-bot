@@ -208,7 +208,10 @@ async def help_answer(message: types.Message):
 @dp.message(lambda msg: msg.text and msg.text.startswith("Уровень"))
 async def set_level(message: types.Message):
     try:
-        level = int(message.text.split()[1])
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            return
+        level = int(parts[1])
         if 1 <= level <= 9:
             user_levels[message.from_user.id] = level
             await message.answer(
@@ -218,8 +221,8 @@ async def set_level(message: types.Message):
             await send_manipulation_example(message, level)
         else:
             await message.answer("Уровень должен быть от 1 до 9")
-    except:
-        await message.answer("Что-то пошло не так")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 @dp.message(lambda msg: msg.text == "🔄 Сменить уровень")
 async def change_level(message: types.Message):
@@ -249,15 +252,21 @@ async def handle_answer(message: types.Message):
     await message.answer(reply)
 
 async def send_manipulation_example(message: types.Message, level: int):
-    prompt = get_generation_prompt(level)
-    
-    response = await deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": "Сгенерируй пример манипуляции"}
-        ]
-    )
+    try:
+        prompt = get_generation_prompt(level)
+        
+        response = await deepseek.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": "Сгенерируй пример манипуляции"}
+            ]
+        )
+        
+        example = response.choices[0].message.content
+        await message.answer(example)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при генерации. Попробуй ещё раз.\n\nТехническое: {str(e)[:200]}")
     
     example = response.choices[0].message.content
     await message.answer(example)
