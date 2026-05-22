@@ -208,21 +208,18 @@ async def help_answer(message: types.Message):
 @dp.message(lambda msg: msg.text and msg.text.startswith("Уровень"))
 async def set_level(message: types.Message):
     try:
+        await message.answer(f"DEBUG: получил сообщение: '{message.text}'")
         parts = message.text.strip().split()
-        if len(parts) != 2:
-            return
+        await message.answer(f"DEBUG: parts = {parts}")
         level = int(parts[1])
+        await message.answer(f"DEBUG: level = {level}")
         if 1 <= level <= 9:
             user_levels[message.from_user.id] = level
-            await message.answer(
-                f"✅ Уровень {level} выбран. Генерирую пример...",
-                reply_markup=get_levels_keyboard()
-            )
-            await send_manipulation_example(message, level)
+            await message.answer(f"✅ Уровень {level} выбран.")
         else:
             await message.answer("Уровень должен быть от 1 до 9")
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
+        await message.answer(f"ОШИБКА: {type(e).__name__}: {e}")
 
 @dp.message(lambda msg: msg.text == "🔄 Сменить уровень")
 async def change_level(message: types.Message):
