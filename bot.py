@@ -243,7 +243,7 @@ async def send_manipulation_example(message: types.Message, level: int):
         example = response.choices[0].message.content
         await message.answer(example)
     except Exception as e:
-        await message.answer("❌ Ошибка генерации. Попробуй ещё раз.")
+        await message.answer(f"❌ Ошибка: {type(e).__name__}\n\n{str(e)[:300]}")
 
 async def main():
     await run_web_server()
