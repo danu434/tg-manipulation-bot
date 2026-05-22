@@ -1,7 +1,7 @@
 import asyncio
 import os
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from openai import AsyncOpenAI
@@ -20,28 +20,19 @@ deepseek = AsyncOpenAI(
 # ========== ТЕХНИКИ ПО УРОВНЯМ ==========
 LEVEL_TECHNIQUES = {
     1: "Повышение голоса, ультиматум, прямая угроза, шантаж, запугивание, приказ, оскорбление, перебивание, демонстративный гнев, физическое вторжение в пространство, игнорирование в лоб, обвинение без доказательств, запрет, требование немедленного решения",
-    
     2: "Вина, стыд, жалость, обида, ревность, лесть грубая, критика под видом заботы, сравнение с другими, обесценивание, демонстративное молчание, пассивная агрессия прямая, угроза разрывом, апелляция к возрасту/статусу, пристыжение при свидетелях",
-    
     3: "Обобщение, ложная дихотомия, навешивание ярлыков, апелляция к авторитету, апелляция к большинству, FOMO, цейтнот, создание дефицита, эффект привязки (якорь), ложная причина post hoc, скользкий путь, апелляция к традиции, подмена тезиса, частный случай как доказательство",
-    
     4: "Триангуляция, газлайтинг (грубый), проекция, игра в жертву, мнимая беспомощность, создание долга, намёк с давлением, саботаж, двойное послание (слова ≠ тон), провокация на эмоции, подставной вопрос, тест на лояльность, комплимент-укол, передёргивание",
-    
     5: "Газлайтинг тонкий, straw man, круговая аргументация, двусмысленность намеренная, софизм, подталкивание к нужному выводу, секретность/недоговорки, игра на опережение, иллюзия выбора, отзеркаливание (НЛП), подстройка (НЛП), якорение (НЛП), рефрейминг манипулятивный, разрыв шаблона",
-    
     6: "Пресуппозиция, чтение мыслей (приписывание мотивов), встроенная команда, трюизмы (банальности для согласия), импликатура, мета-моделирование в обход, номинализация, неспецифические глаголы, универсальные квантификаторы, модальные операторы долженствования, потерянная перформативность, инверсия ответственности, абстрагирование, комплексный эквивалент",
-    
     7: "Эриксоновский гипноз (база), встроенная метафора, рассеивание, использование транса, диссоциация управляемая, якорь пространственный, калибровка (НЛП), ведение (НЛП), раппорт принудительный, перегрузка сенсорная, подпороговое воздействие, контекстуальный рефрейминг, ценностный конфликт, захват идентичности",
-    
     8: "Метод Сократа (принуждение к согласию), метод вилки, техника двери в лицо, техника ноги в двери, техника низкого шара, затратный метод, эффект Бенджамина Франклина, принудительное обязательство, публичное обещание, когнитивный диссонанс (принудительный), рамка выигрыш-проигрыш, двойной агент, информационная блокада, утечка подконтрольная",
-    
     9: "Парадоксальное вмешательство, предписание симптома, рефрейминг идентичности, генеративный рефрейминг, псевдоориентированное слушание, сократический диалог (продвинутый), экзистенциальное давление, манипуляция картиной мира, меметический захват, нарративное подчинение, инфоцыганский каскад, сектантская изоляция (поэтапная), контроль среды, контроль информации, контроль мышления, контроль эмоций (тотальный)"
 }
 
 # ========== ПРОМПТЫ ==========
 def get_generation_prompt(level):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
-    
     return f"""Ты — генератор учебных примеров манипуляций для тренажёра.
 
 Уровень сложности: {level}
@@ -85,7 +76,6 @@ def get_generation_prompt(level):
 
 def get_check_prompt(level, user_answer):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
-    
     return f"""Ты — проверяющий в тренажёре распознавания манипуляций.
 
 Уровень: {level}
@@ -102,7 +92,6 @@ def get_check_prompt(level, user_answer):
 - Какие техники он пропустил
 - Оцени его ответ манипулятору (коротко: работает / не работает, почему)
 - Если есть пропущенные техники — назови их
-- Если пользователь назвал техники не из этого уровня, но они действительно есть — засчитай
 
 Формат ответа:
 ✅ Найдено верно: [техники]
@@ -145,7 +134,6 @@ HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 ──────────────────
 
 📋 ДОСТУПНЫЕ ТЕХНИКИ ПО УРОВНЯМ
-(бота можно попросить показать этот список на любом уровне)
 
 УРОВЕНЬ 1: Повышение голоса, ультиматум, прямая угроза, шантаж, запугивание, приказ, оскорбление, перебивание, демонстративный гнев, физическое вторжение в пространство, игнорирование в лоб, обвинение без доказательств, запрет, требование немедленного решения
 
@@ -163,7 +151,7 @@ HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 
 УРОВЕНЬ 8: Метод Сократа (принуждение к согласию), метод вилки, техника двери в лицо, техника ноги в двери, техника низкого шара, затратный метод, эффект Бенджамина Франклина, принудительное обязательство, публичное обещание, когнитивный диссонанс (принудительный), рамка выигрыш-проигрыш, двойной агент, информационная блокада, утечка подконтрольная
 
-УРОВЕНЬ 9: Парадоксальное вмешательство, предписание симптома, рефрейминг идентичности, генеративный рефрейминг, псевдоориентированное слушание, сократический диалог (продвинутый), экзистенциальное давление, манипуляция картиной мира, меметический захват, нарративное подчинение, инфоцыганский каскад, сектантская изоляция (поэтапная), контроль среды, контроль информации, контроль мышление, контроль эмоций (тотальный)
+УРОВЕНЬ 9: Парадоксальное вмешательство, предписание симптома, рефрейминг идентичности, генеративный рефрейминг, псевдоориентированное слушание, сократический диалог (продвинутый), экзистенциальное давление, манипуляция картиной мира, меметический захват, нарративное подчинение, инфоцыганский каскад, сектантская изоляция (поэтапная), контроль среды, контроль информации, контроль мышления, контроль эмоций (тотальный)
 
 💡 СОВЕТ: Начинайте с Уровня 1. Чем выше уровень — тем тоньше и незаметнее манипуляции."""
 
@@ -171,7 +159,7 @@ HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
+# ========== ВЕБ-СЕРВЕР ==========
 async def handle_health(request):
     return web.Response(text="OK")
 
@@ -182,51 +170,43 @@ async def run_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"Health server started on port {PORT}")
 
 # ========== ХЭНДЛЕРЫ ==========
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_levels[message.from_user.id] = 1
     await message.answer(
-        "👋 Привет! Это тренажёр распознавания манипуляций.\n\n"
-        "Выбери уровень сложности:",
+        "👋 Привет! Это тренажёр распознавания манипуляций.\n\nВыбери уровень сложности:",
         reply_markup=get_levels_keyboard()
     )
 
 @dp.message(Command("menu"))
 async def menu(message: types.Message):
-    await message.answer(
-        "Выбери уровень:",
-        reply_markup=get_levels_keyboard()
-    )
+    await message.answer("Выбери уровень:", reply_markup=get_levels_keyboard())
 
-@dp.message(lambda msg: msg.text == "📘 Как отвечать")
+@dp.message(F.text == "📘 Как отвечать")
 async def help_answer(message: types.Message):
     await message.answer(HELP_TEXT)
 
-@dp.message(lambda msg: msg.text and msg.text.startswith("Уровень"))
+@dp.message(F.text == "🔄 Сменить уровень")
+async def change_level(message: types.Message):
+    await message.answer("Выбери новый уровень:", reply_markup=get_levels_keyboard())
+
+@dp.message(F.text.startswith("Уровень"))
 async def set_level(message: types.Message):
     try:
-        await message.answer(f"DEBUG: получил сообщение: '{message.text}'")
         parts = message.text.strip().split()
-        await message.answer(f"DEBUG: parts = {parts}")
+        if len(parts) != 2:
+            return
         level = int(parts[1])
-        await message.answer(f"DEBUG: level = {level}")
         if 1 <= level <= 9:
             user_levels[message.from_user.id] = level
-            await message.answer(f"✅ Уровень {level} выбран.")
+            await message.answer(f"✅ Уровень {level} выбран. Генерирую пример...")
+            await send_manipulation_example(message, level)
         else:
             await message.answer("Уровень должен быть от 1 до 9")
-    except Exception as e:
-        await message.answer(f"ОШИБКА: {type(e).__name__}: {e}")
-
-@dp.message(lambda msg: msg.text == "🔄 Сменить уровень")
-async def change_level(message: types.Message):
-    await message.answer(
-        "Выбери новый уровень:",
-        reply_markup=get_levels_keyboard()
-    )
+    except:
+        pass
 
 @dp.message()
 async def handle_answer(message: types.Message):
@@ -237,21 +217,22 @@ async def handle_answer(message: types.Message):
     
     prompt = get_check_prompt(level, message.text)
     
-    response = await deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": message.text}
-        ]
-    )
-    
-    reply = response.choices[0].message.content
-    await message.answer(reply)
+    try:
+        response = await deepseek.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message.text}
+            ]
+        )
+        reply = response.choices[0].message.content
+        await message.answer(reply)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка проверки. Попробуй ещё раз.")
 
 async def send_manipulation_example(message: types.Message, level: int):
+    prompt = get_generation_prompt(level)
     try:
-        prompt = get_generation_prompt(level)
-        
         response = await deepseek.chat.completions.create(
             model="deepseek-chat",
             messages=[
@@ -259,14 +240,10 @@ async def send_manipulation_example(message: types.Message, level: int):
                 {"role": "user", "content": "Сгенерируй пример манипуляции"}
             ]
         )
-        
         example = response.choices[0].message.content
         await message.answer(example)
     except Exception as e:
-        await message.answer(f"❌ Ошибка при генерации. Попробуй ещё раз.\n\nТехническое: {str(e)[:200]}")
-    
-    example = response.choices[0].message.content
-    await message.answer(example)
+        await message.answer("❌ Ошибка генерации. Попробуй ещё раз.")
 
 async def main():
     await run_web_server()
