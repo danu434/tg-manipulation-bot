@@ -41,6 +41,7 @@ user_mode = {}
 user_levels = {}
 user_last_example = {}
 user_story = {}
+user_last_activity = {}
 
 # ========== ПРОМПТЫ ==========
 RULES = """
@@ -197,14 +198,22 @@ def get_main_menu():
         [KeyboardButton(text="🎯 Режимы"), KeyboardButton(text="📊 Уровни")],
         [KeyboardButton(text="📘 Как отвечать")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True
+    )
 
 def get_mode_menu():
     buttons = [
         [KeyboardButton(text="🎯 Одиночный"), KeyboardButton(text="♾️ Бесконечный")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True
+    )
 
 def get_levels_menu():
     buttons = [
@@ -213,7 +222,11 @@ def get_levels_menu():
         [KeyboardButton(text="Уровень 7"), KeyboardButton(text="Уровень 8"), KeyboardButton(text="Уровень 9")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True
+    )
 
 def get_game_keyboard(is_endless=False):
     buttons = [
@@ -226,7 +239,10 @@ def get_game_keyboard(is_endless=False):
     else:
         buttons.insert(0, [KeyboardButton(text="▶️ Продолжить")])
 
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True
+    )
 
 # ========== ТЕКСТ ИНСТРУКЦИИ ==========
 HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
@@ -255,9 +271,11 @@ async def health(request):
 
 async def start_webserver():
     app = web.Application()
+
     app.router.add_get("/", health)
 
     runner = web.AppRunner(app)
+
     await runner.setup()
 
     site = web.TCPSite(
@@ -270,20 +288,64 @@ async def start_webserver():
 
 # ========== OPENROUTER HELPER ==========
 async def ask_model(prompt: str):
-    response = await asyncio.wait_for(
-        client.chat.completions.create(
-            model="deepseek/deepseek-chat",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        ),
-        timeout=45
-    )
+    try:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="deepseek/deepseek-v4-flash:free",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=700,
+                temperature=0.7
+            ),
+            timeout=45
+        )
 
-    return response.choices[0].message.content
+        if not response.choices:
+            return None
+
+        content = response.choices[0].message.content
+
+        if not content:
+            return None
+
+        return content.strip()
+
+    except asyncio.TimeoutError:
+        raise
+
+    except Exception as e:
+        logging.exception(f"OPENROUTER ERROR: {e}")
+        return None
+
+# ========== CLEANUP ==========
+async def cleanup_old_users():
+    while True:
+        try:
+            now = asyncio.get_event_loop().time()
+
+            inactive = []
+
+            for user_id, last_time in user_last_activity.items():
+                if now - last_time > 3600:
+                    inactive.append(user_id)
+
+            for user_id in inactive:
+                user_mode.pop(user_id, None)
+                user_levels.pop(user_id, None)
+                user_last_example.pop(user_id, None)
+                user_story.pop(user_id, None)
+                user_last_activity.pop(user_id, None)
+
+            await asyncio.sleep(600)
+
+        except Exception as e:
+            logging.exception(f"CLEANUP ERROR: {e}")
+
+            await asyncio.sleep(600)
 
 # ========== ХЭНДЛЕРЫ НАВИГАЦИИ ==========
 @dp.message(Command("start"))
@@ -292,6 +354,7 @@ async def start(message: types.Message):
 
     user_mode[user_id] = None
     user_levels[user_id] = 1
+    user_last_activity[user_id] = asyncio.get_event_loop().time()
 
     await message.answer(
         "👋 Привет! Это тренажёр распознавания манипуляций.\n\nВыбери раздел:",
@@ -345,6 +408,7 @@ async def set_single_mode(message: types.Message):
 
     user_mode[user_id] = "single"
     user_levels[user_id] = 1
+    user_last_activity[user_id] = asyncio.get_event_loop().time()
 
     await message.answer(
         "🎯 Одиночный режим.\n\nВыбери уровень:",
@@ -357,6 +421,7 @@ async def set_endless_mode(message: types.Message):
 
     user_mode[user_id] = "endless"
     user_levels[user_id] = 1
+    user_last_activity[user_id] = asyncio.get_event_loop().time()
 
     user_story[user_id] = {
         "level": 1,
@@ -397,14 +462,20 @@ async def choose_level(message: types.Message):
         level = int(parts[1])
 
         if not 1 <= level <= 9:
-            await message.answer("Уровень должен быть от 1 до 9")
+            await message.answer(
+                "Уровень должен быть от 1 до 9"
+            )
             return
 
         user_levels[user_id] = level
+        user_last_activity[user_id] = asyncio.get_event_loop().time()
+
         mode = user_mode.get(user_id, "single")
 
         if mode is None:
-            await message.answer("Сначала выбери режим в разделе 🎯 Режимы")
+            await message.answer(
+                "Сначала выбери режим в разделе 🎯 Режимы"
+            )
             return
 
         if mode == "endless":
@@ -434,7 +505,9 @@ async def continue_single(message: types.Message):
     level = user_levels.get(user_id, 1)
 
     if mode != "single":
-        await message.answer("Эта кнопка только для одиночного режима")
+        await message.answer(
+            "Эта кнопка только для одиночного режима"
+        )
         return
 
     await message.answer(
@@ -450,10 +523,14 @@ async def handle_answer(message: types.Message):
         return
 
     if len(message.text) > 2000:
-        await message.answer("Слишком длинное сообщение.")
+        await message.answer(
+            "Слишком длинное сообщение."
+        )
         return
 
     user_id = message.from_user.id
+
+    user_last_activity[user_id] = asyncio.get_event_loop().time()
 
     mode = user_mode.get(user_id, "single")
     level = user_levels.get(user_id, 1)
@@ -464,7 +541,9 @@ async def handle_answer(message: types.Message):
         )
         return
 
-    await message.answer("🔍 Анализирую твой ответ...")
+    await message.answer(
+        "🔍 Анализирую твой ответ..."
+    )
 
     if mode == "endless":
         await process_endless_answer(message, level)
@@ -477,6 +556,12 @@ async def send_single_example(message: types.Message, level: int):
         example = await ask_model(
             get_generation_prompt(level)
         )
+
+        if not example:
+            await message.answer(
+                "❌ Модель не ответила. Попробуй ещё раз."
+            )
+            return
 
         user_last_example[message.from_user.id] = example
 
@@ -509,6 +594,12 @@ async def process_single_answer(message: types.Message, level: int):
             )
         )
 
+        if not reply:
+            await message.answer(
+                "❌ Модель не ответила. Попробуй ещё раз."
+            )
+            return
+
         await message.answer(reply)
 
     except asyncio.TimeoutError:
@@ -531,6 +622,12 @@ async def start_endless_story(message: types.Message, level: int):
         story_text = await ask_model(
             get_endless_start_prompt(level)
         )
+
+        if not story_text:
+            await message.answer(
+                "❌ Модель не ответила. Попробуй ещё раз."
+            )
+            return
 
         user_story[user_id] = {
             "level": level,
@@ -572,6 +669,12 @@ async def process_endless_answer(message: types.Message, level: int):
                 example
             )
         )
+
+        if not check_result:
+            await message.answer(
+                "❌ Модель не ответила. Попробуй ещё раз."
+            )
+            return
 
     except asyncio.TimeoutError:
         await message.answer(
@@ -617,13 +720,22 @@ async def process_endless_answer(message: types.Message, level: int):
             )
         )
 
+        if not continuation:
+            await message.answer(
+                "❌ Модель не ответила. Попробуй ещё раз."
+            )
+            return
+
         new_history = (
             history
             + "\n\n👤 Жертва: "
             + message.text
             + "\n"
             + continuation
-        )[-4000:]
+        )
+
+        if len(new_history) > 4000:
+            new_history = new_history[-4000:]
 
         user_story[user_id] = {
             "level": new_level,
@@ -661,6 +773,10 @@ async def main():
     )
 
     await start_webserver()
+
+    asyncio.create_task(
+        cleanup_old_users()
+    )
 
     logging.info("Polling started")
 
