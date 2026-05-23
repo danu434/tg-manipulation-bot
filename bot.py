@@ -258,6 +258,28 @@ HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 
 Можно писать в свободной форме — бот поймёт.
 
+──────────────────
+
+📋 ДОСТУПНЫЕ ТЕХНИКИ ПО УРОВНЯМ (всего 128)
+
+УРОВЕНЬ 1: Повышение голоса, ультиматум, прямая угроза, шантаж, запугивание, приказ, оскорбление, перебивание, демонстративный гнев, физическое вторжение в пространство, игнорирование в лоб, обвинение без доказательств, запрет, требование немедленного решения
+
+УРОВЕНЬ 2: Вина, стыд, жалость, обида, ревность, лесть грубая, критика под видом заботы, сравнение с другими, обесценивание, демонстративное молчание, пассивная агрессия прямая, угроза разрывом, апелляция к возрасту/статусу, пристыжение при свидетелях
+
+УРОВЕНЬ 3: Обобщение, ложная дихотомия, навешивание ярлыков, апелляция к авторитету, апелляция к большинству, FOMO, цейтнот, создание дефицита, эффект привязки (якорь), ложная причина post hoc, скользкий путь, апелляция к традиции, подмена тезиса, частный случай как доказательство
+
+УРОВЕНЬ 4: Триангуляция, газлайтинг (грубый), проекция, игра в жертву, мнимая беспомощность, создание долга, намёк с давлением, саботаж, двойное послание, провокация на эмоции, подставной вопрос, тест на лояльность, комплимент-укол, передёргивание
+
+УРОВЕНЬ 5: Газлайтинг тонкий, straw man, круговая аргументация, двусмысленность намеренная, софизм, подталкивание к нужному выводу, секретность/недоговорки, игра на опережение, иллюзия выбора, отзеркаливание, подстройка, якорение, рефрейминг манипулятивный, разрыв шаблона
+
+УРОВЕНЬ 6: Пресуппозиция, чтение мыслей (приписывание мотивов), встроенная команда, трюизмы, импликатура, мета-моделирование в обход, номинализация, неспецифические глаголы, универсальные квантификаторы, модальные операторы долженствования, потерянная перформативность, инверсия ответственности, абстрагирование, комплексный эквивалент
+
+УРОВЕНЬ 7: Эриксоновский гипноз (база), встроенная метафора, рассеивание, использование транса, диссоциация управляемая, якорь пространственный, калибровка, ведение, раппорт принудительный, перегрузка сенсорная, подпороговое воздействие, контекстуальный рефрейминг, ценностный конфликт, захват идентичности
+
+УРОВЕНЬ 8: Метод Сократа (принуждение к согласию), метод вилки, техника двери в лицо, техника ноги в двери, техника низкого шара, затратный метод, эффект Бенджамина Франклина, принудительное обязательство, публичное обещание, когнитивный диссонанс (принудительный), рамка выигрыш-проигрыш, двойной агент, информационная блокада, утечка подконтрольная
+
+УРОВЕНЬ 9: Парадоксальное вмешательство, предписание симптома, рефрейминг идентичности, генеративный рефрейминг, псевдоориентированное слушание, сократический диалог (продвинутый), экзистенциальное давление, манипуляция картиной мира, меметический захват, нарративное подчинение, инфоцыганский каскад, сектантская изоляция (поэтапная), контроль среды, контроль информации, контроль мышления, контроль эмоций (тотальный)
+
 💡 Начинайте с Уровня 1.
 """
 
@@ -287,39 +309,95 @@ async def start_webserver():
     await site.start()
 
 # ========== OPENROUTER HELPER ==========
+MODELS = [
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-v4-flash:free"
+]
+
 async def ask_model(prompt: str):
-    try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model="deepseek/deepseek-v4-flash:free",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=700,
-                temperature=0.7
-            ),
-            timeout=45
-        )
 
-        if not response.choices:
-            return None
+    last_error = None
 
-        content = response.choices[0].message.content
+    for model_name in MODELS:
 
-        if not content:
-            return None
+        try:
+            logging.info(f"Trying model: {model_name}")
 
-        return content.strip()
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    max_tokens=700,
+                    temperature=0.8
+                ),
+                timeout=60
+            )
 
-    except asyncio.TimeoutError:
-        raise
+            text = response.choices[0].message.content
 
-    except Exception as e:
-        logging.exception(f"OPENROUTER ERROR: {e}")
-        return None
+            if not text:
+                continue
+
+            logging.info(f"Success with model: {model_name}")
+
+            return text
+
+        except asyncio.TimeoutError:
+            logging.warning(f"Timeout with model: {model_name}")
+            last_error = "timeout"
+
+        except Exception as e:
+
+            error_text = str(e).lower()
+
+            logging.exception(
+                f"MODEL ERROR [{model_name}]: {e}"
+            )
+
+            last_error = error_text
+
+            # quota / credits
+            if (
+                "402" in error_text
+                or "insufficient_quota" in error_text
+                or "out of credits" in error_text
+            ):
+                logging.warning(
+                    f"Quota exceeded for: {model_name}"
+                )
+                continue
+
+            # rate limit
+            if "429" in error_text:
+                logging.warning(
+                    f"Rate limited: {model_name}"
+                )
+                continue
+
+            # provider dead
+            if (
+                "provider returned error" in error_text
+                or "503" in error_text
+                or "502" in error_text
+            ):
+                logging.warning(
+                    f"Provider failed: {model_name}"
+                )
+                continue
+
+            continue
+
+    logging.error(
+        f"ALL MODELS FAILED. Last error: {last_error}"
+    )
+
+    return None
 
 # ========== CLEANUP ==========
 async def cleanup_old_users():
