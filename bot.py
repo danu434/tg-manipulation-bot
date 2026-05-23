@@ -325,7 +325,6 @@ async def start_webserver():
 
 # ========== МОДЕЛИ ==========
 MODELS = [
-    "deepseek/deepseek-v4-flash:free",
     "openai/gpt-oss-120b:free",          
     "nvidia/nemotron-3-super:free",       
     "nvidia/nemotron-3-nano-30b-a3b:free",
