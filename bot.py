@@ -1,10 +1,16 @@
 import asyncio
 import os
+import logging
+import re
+
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from openai import AsyncOpenAI
+
+# ========== ЛОГИ ==========
+logging.basicConfig(level=logging.INFO)
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -46,6 +52,7 @@ RULES = """
 
 def get_generation_prompt(level):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
+
     return f"""Ты — генератор учебных примеров манипуляций для тренажёра.
 {RULES}
 
@@ -85,10 +92,12 @@ def get_generation_prompt(level):
 
 НЕ УКАЗЫВАЙ использованные техники.
 НЕ ПИШИ анализ или подсказки.
-НЕ ДЕЛАЙ пример слишком длинным — он должен читаться за 15–30 секунд."""
+НЕ ДЕЛАЙ пример слишком длинным — он должен читаться за 15–30 секунд.
+"""
 
 def get_endless_start_prompt(level):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
+
     return f"""Ты — генератор НАЧАЛА сюжетной линии для бесконечного режима.
 {RULES}
 
@@ -111,10 +120,12 @@ def get_endless_start_prompt(level):
 [первая реплика манипулятора]
 
 НЕ УКАЗЫВАЙ техники.
-НЕ ДЕЛАЙ слишком длинным."""
+НЕ ДЕЛАЙ слишком длинным.
+"""
 
 def get_endless_continuation_prompt(level, story_context, story_history, user_answer, progress):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
+
     return f"""Ты — генератор ПРОДОЛЖЕНИЯ манипулятивной истории.
 {RULES}
 
@@ -143,10 +154,12 @@ def get_endless_continuation_prompt(level, story_context, story_history, user_an
 [новая реплика манипулятора]
 
 НЕ ПИШИ анализ.
-НЕ УКАЗЫВАЙ техники."""
+НЕ УКАЗЫВАЙ техники.
+"""
 
 def get_check_prompt(level, user_answer, example_text):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
+
     return f"""Ты — проверяющий в тренажёре манипуляций. Будь внимательным, но не придирчивым.
 
 Уровень: {level}
@@ -175,7 +188,8 @@ def get_check_prompt(level, user_answer, example_text):
 💬 Твой ответ манипулятору: [оценка в одно предложение]
 📊 Прогресс уровня: [реалистично-пессимистичная оценка уровня ответа пользователя по универсальности, от -100, до 100%]
 
-Если ответ хороший — похвали. Если что-то пропущено — подскажи аккуратно."""
+Если ответ хороший — похвали. Если что-то пропущено — подскажи аккуратно.
+"""
 
 # ========== КЛАВИАТУРЫ ==========
 def get_main_menu():
@@ -206,11 +220,14 @@ def get_game_keyboard(is_endless=False):
         [KeyboardButton(text="🔄 Сменить уровень")],
         [KeyboardButton(text="⬅️ В главное меню")]
     ]
+
     if is_endless:
         buttons.insert(0, [KeyboardButton(text="⏹ Завершить")])
     else:
         buttons.insert(0, [KeyboardButton(text="▶️ Продолжить")])
+
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
 # ========== ТЕКСТ ИНСТРУКЦИИ ==========
 HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 
@@ -225,29 +242,8 @@ HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 
 Можно писать в свободной форме — бот поймёт.
 
-──────────────────
-
-📋 ДОСТУПНЫЕ ТЕХНИКИ ПО УРОВНЯМ
-
-УРОВЕНЬ 1: Повышение голоса, ультиматум, прямая угроза, шантаж, запугивание, приказ, оскорбление, перебивание, демонстративный гнев, физическое вторжение в пространство, игнорирование в лоб, обвинение без доказательств, запрет, требование немедленного решения
-
-УРОВЕНЬ 2: Вина, стыд, жалость, обида, ревность, лесть грубая, критика под видом заботы, сравнение с другими, обесценивание, демонстративное молчание, пассивная агрессия прямая, угроза разрывом, апелляция к возрасту/статусу, пристыжение при свидетелях
-
-УРОВЕНЬ 3: Обобщение, ложная дихотомия, навешивание ярлыков, апелляция к авторитету, апелляция к большинству, FOMO, цейтнот, создание дефицита, эффект привязки (якорь), ложная причина post hoc, скользкий путь, апелляция к традиции, подмена тезиса, частный случай как доказательство
-
-УРОВЕНЬ 4: Триангуляция, газлайтинг (грубый), проекция, игра в жертву, мнимая беспомощность, создание долга, намёк с давлением, саботаж, двойное послание, провокация на эмоции, подставной вопрос, тест на лояльность, комплимент-укол, передёргивание
-
-УРОВЕНЬ 5: Газлайтинг тонкий, straw man, круговая аргументация, двусмысленность намеренная, софизм, подталкивание к нужному выводу, секретность/недоговорки, игра на опережение, иллюзия выбора, отзеркаливание, подстройка, якорение, рефрейминг манипулятивный, разрыв шаблона
-
-УРОВЕНЬ 6: Пресуппозиция, чтение мыслей (приписывание мотивов), встроенная команда, трюизмы, импликатура, мета-моделирование в обход, номинализация, неспецифические глаголы, универсальные квантификаторы, модальные операторы долженствования, потерянная перформативность, инверсия ответственности, абстрагирование, комплексный эквивалент
-
-УРОВЕНЬ 7: Эриксоновский гипноз (база), встроенная метафора, рассеивание, использование транса, диссоциация управляемая, якорь пространственный, калибровка, ведение, раппорт принудительный, перегрузка сенсорная, подпороговое воздействие, контекстуальный рефрейминг, ценностный конфликт, захват идентичности
-
-УРОВЕНЬ 8: Метод Сократа (принуждение к согласию), метод вилки, техника двери в лицо, техника ноги в двери, техника низкого шара, затратный метод, эффект Бенджамина Франклина, принудительное обязательство, публичное обещание, когнитивный диссонанс (принудительный), рамка выигрыш-проигрыш, двойной агент, информационная блокада, утечка подконтрольная
-
-УРОВЕНЬ 9: Парадоксальное вмешательство, предписание симптома, рефрейминг идентичности, генеративный рефрейминг, псевдоориентированное слушание, сократический диалог (продвинутый), экзистенциальное давление, манипуляция картиной мира, меметический захват, нарративное подчинение, инфоцыганский каскад, сектантская изоляция (поэтапная), контроль среды, контроль информации, контроль мышления, контроль эмоций (тотальный)
-
-💡 Начинайте с Уровня 1."""
+💡 Начинайте с Уровня 1.
+"""
 
 # ========== БОТ ==========
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -260,17 +256,43 @@ async def health(request):
 async def start_webserver():
     app = web.Application()
     app.router.add_get("/", health)
+
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+
+    site = web.TCPSite(
+        runner,
+        host="0.0.0.0",
+        port=PORT
+    )
+
     await site.start()
+
+# ========== OPENROUTER HELPER ==========
+async def ask_model(prompt: str):
+    response = await asyncio.wait_for(
+        client.chat.completions.create(
+            model="deepseek/deepseek-chat",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        ),
+        timeout=45
+    )
+
+    return response.choices[0].message.content
 
 # ========== ХЭНДЛЕРЫ НАВИГАЦИИ ==========
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = message.from_user.id
+
     user_mode[user_id] = None
     user_levels[user_id] = 1
+
     await message.answer(
         "👋 Привет! Это тренажёр распознавания манипуляций.\n\nВыбери раздел:",
         reply_markup=get_main_menu()
@@ -278,20 +300,32 @@ async def start(message: types.Message):
 
 @dp.message(Command("menu"))
 async def menu(message: types.Message):
-    await message.answer("Выбери раздел:", reply_markup=get_main_menu())
+    await message.answer(
+        "Выбери раздел:",
+        reply_markup=get_main_menu()
+    )
 
 @dp.message(F.text == "⬅️ Назад")
 @dp.message(F.text == "⬅️ В главное меню")
 async def back_to_main(message: types.Message):
-    await message.answer("Главное меню:", reply_markup=get_main_menu())
+    await message.answer(
+        "Главное меню:",
+        reply_markup=get_main_menu()
+    )
 
 @dp.message(F.text == "🎯 Режимы")
 async def modes_menu(message: types.Message):
-    await message.answer("Выбери режим:", reply_markup=get_mode_menu())
+    await message.answer(
+        "Выбери режим:",
+        reply_markup=get_mode_menu()
+    )
 
 @dp.message(F.text == "📊 Уровни")
 async def levels_menu(message: types.Message):
-    await message.answer("Выбери уровень:", reply_markup=get_levels_menu())
+    await message.answer(
+        "Выбери уровень:",
+        reply_markup=get_levels_menu()
+    )
 
 @dp.message(F.text == "📘 Как отвечать")
 async def help_handler(message: types.Message):
@@ -299,14 +333,19 @@ async def help_handler(message: types.Message):
 
 @dp.message(F.text == "🔄 Сменить уровень")
 async def change_level(message: types.Message):
-    await message.answer("Выбери новый уровень:", reply_markup=get_levels_menu())
+    await message.answer(
+        "Выбери новый уровень:",
+        reply_markup=get_levels_menu()
+    )
 
 # ========== ВЫБОР РЕЖИМА ==========
 @dp.message(F.text == "🎯 Одиночный")
 async def set_single_mode(message: types.Message):
     user_id = message.from_user.id
+
     user_mode[user_id] = "single"
     user_levels[user_id] = 1
+
     await message.answer(
         "🎯 Одиночный режим.\n\nВыбери уровень:",
         reply_markup=get_levels_menu()
@@ -315,9 +354,16 @@ async def set_single_mode(message: types.Message):
 @dp.message(F.text == "♾️ Бесконечный")
 async def set_endless_mode(message: types.Message):
     user_id = message.from_user.id
+
     user_mode[user_id] = "endless"
     user_levels[user_id] = 1
-    user_story[user_id] = {"level": 1, "context": "", "history": ""}
+
+    user_story[user_id] = {
+        "level": 1,
+        "context": "",
+        "history": ""
+    }
+
     await message.answer(
         "♾️ Бесконечный режим.\n\nМанипулятор будет повышать ставки.\nУспешный ответ — переход на уровень выше.\n\nВыбери стартовый уровень:",
         reply_markup=get_levels_menu()
@@ -326,9 +372,12 @@ async def set_endless_mode(message: types.Message):
 @dp.message(F.text == "⏹ Завершить")
 async def stop_endless(message: types.Message):
     user_id = message.from_user.id
+
     user_mode[user_id] = "single"
+
     if user_id in user_story:
         del user_story[user_id]
+
     await message.answer(
         "⏹ Бесконечный режим завершён.\n\nГлавное меню:",
         reply_markup=get_main_menu()
@@ -338,57 +387,85 @@ async def stop_endless(message: types.Message):
 @dp.message(F.text.startswith("Уровень"))
 async def choose_level(message: types.Message):
     user_id = message.from_user.id
+
     try:
         parts = message.text.strip().split()
+
         if len(parts) != 2:
             return
+
         level = int(parts[1])
+
         if not 1 <= level <= 9:
             await message.answer("Уровень должен быть от 1 до 9")
             return
-        
+
         user_levels[user_id] = level
         mode = user_mode.get(user_id, "single")
-        
+
         if mode is None:
             await message.answer("Сначала выбери режим в разделе 🎯 Режимы")
             return
-        
-        is_endless = mode == "endless"
-        
+
         if mode == "endless":
-            await message.answer(f"✅ Уровень {level}. Запускаю бесконечный режим...", reply_markup=get_game_keyboard(True))
+            await message.answer(
+                f"✅ Уровень {level}. Запускаю бесконечный режим...",
+                reply_markup=get_game_keyboard(True)
+            )
+
             await start_endless_story(message, level)
+
         else:
-            await message.answer(f"✅ Уровень {level}. Генерирую пример...", reply_markup=get_game_keyboard(False))
+            await message.answer(
+                f"✅ Уровень {level}. Генерирую пример...",
+                reply_markup=get_game_keyboard(False)
+            )
+
             await send_single_example(message, level)
-    except:
-        pass
+
+    except Exception as e:
+        logging.exception(f"LEVEL ERROR: {e}")
+
 @dp.message(F.text == "▶️ Продолжить")
 async def continue_single(message: types.Message):
     user_id = message.from_user.id
+
     mode = user_mode.get(user_id)
     level = user_levels.get(user_id, 1)
-    
+
     if mode != "single":
         await message.answer("Эта кнопка только для одиночного режима")
         return
-    
-    await message.answer(f"✅ Уровень {level}. Генерирую новый пример...")
+
+    await message.answer(
+        f"✅ Уровень {level}. Генерирую новый пример..."
+    )
+
     await send_single_example(message, level)
+
 # ========== ОБРАБОТКА ОТВЕТОВ ==========
 @dp.message()
 async def handle_answer(message: types.Message):
+    if not message.text:
+        return
+
+    if len(message.text) > 2000:
+        await message.answer("Слишком длинное сообщение.")
+        return
+
     user_id = message.from_user.id
+
     mode = user_mode.get(user_id, "single")
     level = user_levels.get(user_id, 1)
-    
+
     if mode is None:
-        await message.answer("Сначала выбери режим в разделе 🎯 Режимы")
+        await message.answer(
+            "Сначала выбери режим в разделе 🎯 Режимы"
+        )
         return
-    
+
     await message.answer("🔍 Анализирую твой ответ...")
-    
+
     if mode == "endless":
         await process_endless_answer(message, level)
     else:
@@ -397,117 +474,196 @@ async def handle_answer(message: types.Message):
 # ========== ОДИНОЧНЫЙ РЕЖИМ ==========
 async def send_single_example(message: types.Message, level: int):
     try:
-        response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat",
-            messages=[{"role": "user", "content": get_generation_prompt(level)}]
+        example = await ask_model(
+            get_generation_prompt(level)
         )
-        example = response.choices[0].message.content
+
         user_last_example[message.from_user.id] = example
+
         await message.answer(example)
-    except Exception:
-        await message.answer("❌ Ошибка генерации. Попробуй ещё раз.")
+
+    except asyncio.TimeoutError:
+        await message.answer(
+            "⌛ Модель отвечает слишком долго."
+        )
+
+    except Exception as e:
+        logging.exception(f"GENERATION ERROR: {e}")
+
+        await message.answer(
+            "❌ Ошибка генерации. Попробуй ещё раз."
+        )
 
 async def process_single_answer(message: types.Message, level: int):
-    example = user_last_example.get(message.from_user.id, "")
+    example = user_last_example.get(
+        message.from_user.id,
+        ""
+    )
+
     try:
-        response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat",
-            messages=[{
-                "role": "user",
-                "content": get_check_prompt(level, message.text, example)
-            }]
+        reply = await ask_model(
+            get_check_prompt(
+                level,
+                message.text,
+                example
+            )
         )
-        reply = response.choices[0].message.content
+
         await message.answer(reply)
-    except Exception:
-        await message.answer("❌ Ошибка проверки. Попробуй ещё раз.")
+
+    except asyncio.TimeoutError:
+        await message.answer(
+            "⌛ Модель отвечает слишком долго."
+        )
+
+    except Exception as e:
+        logging.exception(f"CHECK ERROR: {e}")
+
+        await message.answer(
+            "❌ Ошибка проверки. Попробуй ещё раз."
+        )
 
 # ========== БЕСКОНЕЧНЫЙ РЕЖИМ ==========
 async def start_endless_story(message: types.Message, level: int):
     user_id = message.from_user.id
+
     try:
-        response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat",
-            messages=[{"role": "user", "content": get_endless_start_prompt(level)}]
+        story_text = await ask_model(
+            get_endless_start_prompt(level)
         )
-        story_text = response.choices[0].message.content
+
         user_story[user_id] = {
             "level": level,
             "context": story_text,
             "history": story_text
         }
+
         user_last_example[user_id] = story_text
+
         await message.answer(story_text)
-    except Exception:
-        await message.answer("❌ Ошибка генерации. Попробуй ещё раз.")
+
+    except asyncio.TimeoutError:
+        await message.answer(
+            "⌛ Модель отвечает слишком долго."
+        )
+
+    except Exception as e:
+        logging.exception(f"ENDLESS START ERROR: {e}")
+
+        await message.answer(
+            "❌ Ошибка генерации. Попробуй ещё раз."
+        )
 
 async def process_endless_answer(message: types.Message, level: int):
     user_id = message.from_user.id
+
     story = user_story.get(user_id, {})
+
     context = story.get("context", "")
     history = story.get("history", "")
+
     example = user_last_example.get(user_id, "")
-    
+
     try:
-        response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat",
-            messages=[{
-                "role": "user",
-                "content": get_check_prompt(level, message.text, example)
-            }]
+        check_result = await ask_model(
+            get_check_prompt(
+                level,
+                message.text,
+                example
+            )
         )
-        check_result = response.choices[0].message.content
-    except Exception:
-        await message.answer("❌ Ошибка проверки. Попробуй ещё раз.")
+
+    except asyncio.TimeoutError:
+        await message.answer(
+            "⌛ Модель отвечает слишком долго."
+        )
         return
-    
+
+    except Exception as e:
+        logging.exception(f"ENDLESS CHECK ERROR: {e}")
+
+        await message.answer(
+            "❌ Ошибка проверки. Попробуй ещё раз."
+        )
+        return
+
     progress = 0
+
     for line in check_result.split("\n"):
         if "Прогресс" in line or "📊" in line:
-            try:
-                progress = int("".join(c for c in line if c.isdigit()))
-            except:
-                progress = 50
+            match = re.search(r"-?\d+", line)
+
+            if match:
+                progress = int(match.group())
+
             break
-    
+
     await message.answer(check_result)
-    
+
     new_level = level
+
     if progress > 60:
         new_level = min(level + 1, 9)
         user_levels[user_id] = new_level
-    
+
     try:
-        response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat",
-            messages=[{
-                "role": "user",
-                "content": get_endless_continuation_prompt(
-                    new_level, context, history, message.text, progress
-                )
-            }]
+        continuation = await ask_model(
+            get_endless_continuation_prompt(
+                new_level,
+                context,
+                history,
+                message.text,
+                progress
+            )
         )
-        continuation = response.choices[0].message.content
-        
-        new_history = history + "\n\n👤 Жертва: " + message.text + "\n" + continuation
+
+        new_history = (
+            history
+            + "\n\n👤 Жертва: "
+            + message.text
+            + "\n"
+            + continuation
+        )[-4000:]
+
         user_story[user_id] = {
             "level": new_level,
             "context": context,
             "history": new_history
         }
+
         user_last_example[user_id] = continuation
-        
+
         if new_level != level:
-            await message.answer(f"⬆️ Уровень повышен до {new_level}!\n\n{continuation}")
+            await message.answer(
+                f"⬆️ Уровень повышен до {new_level}!\n\n{continuation}"
+            )
         else:
             await message.answer(continuation)
-    except Exception:
-        await message.answer("❌ Ошибка генерации продолжения. Попробуй ещё раз.")
+
+    except asyncio.TimeoutError:
+        await message.answer(
+            "⌛ Модель отвечает слишком долго."
+        )
+
+    except Exception as e:
+        logging.exception(f"ENDLESS CONTINUATION ERROR: {e}")
+
+        await message.answer(
+            "❌ Ошибка генерации продолжения. Попробуй ещё раз."
+        )
 
 # ========== MAIN ==========
 async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("Bot starting...")
+
+    await bot.delete_webhook(
+        drop_pending_updates=True
+    )
+
     await start_webserver()
+
+    logging.info("Polling started")
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
