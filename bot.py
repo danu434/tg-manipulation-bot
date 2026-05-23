@@ -229,7 +229,7 @@ async def handle_answer(message: types.Message):
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat-v3-0324:free",
+            model="openai/gpt-3.5-turbo",
             messages=[
                 {
                     "role": "user",
@@ -254,7 +254,7 @@ async def handle_answer(message: types.Message):
 async def send_example(message: types.Message, level: int):
     try:
         response = await client.chat.completions.create(
-            model="deepseek/deepseek-chat-v3-0324:free",
+            model="openai/gpt-3.5-turbo",
             messages=[
                 {
                     "role": "user",
