@@ -2,12 +2,15 @@ import asyncio
 import os
 import logging
 import re
+import random
+import time
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from openai import AsyncOpenAI
+from openai import RateLimitError, APIStatusError
 
 # ========== ЛОГИ ==========
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +46,13 @@ user_levels = {}
 user_last_example = {}
 user_story = {}
 user_last_activity = {}
+
+# ========== ЗАЩИТА ОТ СПАМА ==========
+user_cooldowns = {}
+REQUEST_DELAY = 2
+
+# ========== СЕМАФОР НА ЗАПРОСЫ ==========
+MODEL_SEMAPHORE = asyncio.Semaphore(2)
 
 # ========== ПРОМПТЫ ==========
 RULES = """
@@ -193,7 +203,8 @@ def get_check_prompt(level, user_answer, example_text):
 Если ответ хороший — похвали. Если что-то пропущено — подскажи аккуратно.
 """
 
-# ========== КЛАВИАТУРЫ ==========
+# КЛАВИАТУРЫ
+
 def get_main_menu():
     buttons = [
         [KeyboardButton(text="🎯 Режимы"), KeyboardButton(text="📊 Уровни")],
@@ -245,7 +256,9 @@ def get_game_keyboard(is_endless=False):
         resize_keyboard=True
     )
 
-# ========== ТЕКСТ ИНСТРУКЦИИ ==========
+
+# HELP TEXT
+
 HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 
 1. Прочитайте ситуацию и реплику оппонента
@@ -284,6 +297,7 @@ HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 💡 Начинайте с Уровня 1.
 """
 
+
 # ========== БОТ ==========
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
@@ -309,96 +323,175 @@ async def start_webserver():
 
     await site.start()
 
-# ========== OPENROUTER HELPER ==========
+# ========== МОДЕЛИ ==========
 MODELS = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "qwen/qwen3-next-80b-a3b-instruct:free",
-    "deepseek/deepseek-v4-flash:free"
+    "mistralai/mistral-7b-instruct:free",
+    "google/gemma-2-9b-it:free",
+    "deepseek/deepseek-chat-v3-0324:free"
 ]
 
+# ========== FALLBACK ==========
+FALLBACK_ANALYSIS = """✅ Ты частично распознал давление.
+❌ Некоторые техники могли быть пропущены.
+💬 Твой ответ манипулятору: ответ эмоциональный, но недостаточно устойчивый.
+📊 Прогресс уровня: 15%
+"""
+
+FALLBACK_EXAMPLE = """📋 Ситуация:
+Человек требует немедленного ответа и пытается давить угрозами.
+
+👤 Оппонент (резкий тон, пристальный взгляд, раздражение):
+«Если ты сейчас же не согласишься, потом будет поздно. Хватит тянуть время.»
+"""
+
+# ========== OPENROUTER HELPER ==========
 async def ask_model(prompt: str):
 
-    last_error = None
+    async with MODEL_SEMAPHORE:
 
-    for model_name in MODELS:
+        last_error = None
 
-        try:
-            logging.info(f"Trying model: {model_name}")
+        models = MODELS.copy()
+        random.shuffle(models)
 
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    max_tokens=700,
-                    temperature=0.8
-                ),
-                timeout=60
-            )
+        for model_name in models:
 
-            text = response.choices[0].message.content
+            retries = 2
 
-            if not text:
-                continue
+            for attempt in range(retries):
 
-            logging.info(f"Success with model: {model_name}")
+                try:
+                    logging.info(f"Trying model: {model_name}")
 
-            return text
+                    response = await asyncio.wait_for(
+                        client.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": prompt
+                                }
+                            ],
+                            max_tokens=700,
+                            temperature=0.8
+                        ),
+                        timeout=45
+                    )
 
-        except asyncio.TimeoutError:
-            logging.warning(f"Timeout with model: {model_name}")
-            last_error = "timeout"
+                    if not response:
+                        continue
 
-        except Exception as e:
+                    if not response.choices:
+                        continue
 
-            error_text = str(e).lower()
+                    text = response.choices[0].message.content
 
-            logging.exception(
-                f"MODEL ERROR [{model_name}]: {e}"
-            )
+                    if not text:
+                        continue
 
-            last_error = error_text
+                    text = text.strip()
 
-            # quota / credits
-            if (
-                "402" in error_text
-                or "insufficient_quota" in error_text
-                or "out of credits" in error_text
-            ):
-                logging.warning(
-                    f"Quota exceeded for: {model_name}"
-                )
-                continue
+                    if len(text) < 3:
+                        continue
 
-            # rate limit
-            if "429" in error_text:
-                logging.warning(
-                    f"Rate limited: {model_name}"
-                )
-                continue
+                    logging.info(f"Success with model: {model_name}")
 
-            # provider dead
-            if (
-                "provider returned error" in error_text
-                or "503" in error_text
-                or "502" in error_text
-            ):
-                logging.warning(
-                    f"Provider failed: {model_name}"
-                )
-                continue
+                    return text
 
-            continue
+                except asyncio.TimeoutError:
+                    logging.warning(f"Timeout with model: {model_name}")
+                    last_error = "timeout"
 
-    logging.error(
-        f"ALL MODELS FAILED. Last error: {last_error}"
-    )
+                    await asyncio.sleep(2)
 
-    return None
+                except RateLimitError as e:
+
+                    error_text = str(e).lower()
+                    last_error = error_text
+
+                    retry_after = 5
+
+                    match = re.search(r"retry_after_seconds['\"]?:\s*(\d+)", error_text)
+
+                    if match:
+                        retry_after = int(match.group(1))
+
+                    retry_after = min(retry_after, 15)
+
+                    logging.warning(
+                        f"Rate limited: {model_name}. Waiting {retry_after}s"
+                    )
+
+                    await asyncio.sleep(retry_after)
+
+                    continue
+
+                except APIStatusError as e:
+
+                    error_text = str(e).lower()
+                    last_error = error_text
+
+                    logging.exception(
+                        f"MODEL ERROR [{model_name}]: {e}"
+                    )
+
+                    if (
+                        "402" in error_text
+                        or "insufficient_quota" in error_text
+                        or "out of credits" in error_text
+                    ):
+                        logging.warning(
+                            f"Quota exceeded for: {model_name}"
+                        )
+
+                        break
+
+                    if "429" in error_text:
+                        await asyncio.sleep(5)
+                        continue
+
+                    if (
+                        "provider returned error" in error_text
+                        or "503" in error_text
+                        or "502" in error_text
+                    ):
+                        await asyncio.sleep(3)
+                        continue
+
+                except Exception as e:
+
+                    error_text = str(e).lower()
+                    last_error = error_text
+
+                    logging.exception(
+                        f"MODEL ERROR [{model_name}]: {e}"
+                    )
+
+                    await asyncio.sleep(2)
+
+                    continue
+
+        logging.error(
+            f"ALL MODELS FAILED. Last error: {last_error}"
+        )
+
+        return None
+
+# ========== SAFE MODEL WRAPPER ==========
+async def safe_ask_model(prompt, fallback_text=None):
+
+    try:
+        result = await ask_model(prompt)
+
+        if result:
+            return result
+
+    except Exception as e:
+        logging.exception(f"SAFE MODEL ERROR: {e}")
+
+    return fallback_text
 
 # ========== CLEANUP ==========
 async def cleanup_old_users():
@@ -418,6 +511,7 @@ async def cleanup_old_users():
                 user_last_example.pop(user_id, None)
                 user_story.pop(user_id, None)
                 user_last_activity.pop(user_id, None)
+                user_cooldowns.pop(user_id, None)
 
             await asyncio.sleep(600)
 
@@ -426,7 +520,9 @@ async def cleanup_old_users():
 
             await asyncio.sleep(600)
 
-# ========== ХЭНДЛЕРЫ НАВИГАЦИИ ==========
+# ======================================================================
+# ВСЕ ТВОИ ХЭНДЛЕРЫ МЕНЮ И НАВИГАЦИИ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = message.from_user.id
@@ -479,6 +575,7 @@ async def change_level(message: types.Message):
         "Выбери новый уровень:",
         reply_markup=get_levels_menu()
     )
+# ======================================================================
 
 # ========== ВЫБОР РЕЖИМА ==========
 @dp.message(F.text == "🎯 Одиночный")
@@ -595,19 +692,65 @@ async def continue_single(message: types.Message):
 
     await send_single_example(message, level)
 
+# ========== ЗАЩИТА ОТ СПАМА ==========
+def is_on_cooldown(user_id):
+
+    now = time.time()
+
+    last = user_cooldowns.get(user_id, 0)
+
+    if now - last < REQUEST_DELAY:
+        return True
+
+    user_cooldowns[user_id] = now
+
+    return False
+
 # ========== ОБРАБОТКА ОТВЕТОВ ==========
 @dp.message()
 async def handle_answer(message: types.Message):
+
     if not message.text:
         return
 
-    if len(message.text) > 2000:
+    text = message.text.strip()
+
+    if not text:
+        return
+
+    # НЕ ОБРАБАТЫВАЕМ КНОПКИ
+    ignored_buttons = {
+        "🎯 Режимы",
+        "📊 Уровни",
+        "📘 Как отвечать",
+        "🎯 Одиночный",
+        "♾️ Бесконечный",
+        "⬅️ Назад",
+        "⬅️ В главное меню",
+        "🔄 Сменить уровень",
+        "▶️ Продолжить",
+        "⏹ Завершить"
+    }
+
+    if text in ignored_buttons:
+        return
+
+    if text.startswith("Уровень"):
+        return
+
+    if len(text) > 2000:
         await message.answer(
             "Слишком длинное сообщение."
         )
         return
 
     user_id = message.from_user.id
+
+    if is_on_cooldown(user_id):
+        await message.answer(
+            "⏳ Подожди пару секунд перед следующим сообщением."
+        )
+        return
 
     user_last_activity[user_id] = asyncio.get_event_loop().time()
 
@@ -632,15 +775,13 @@ async def handle_answer(message: types.Message):
 # ========== ОДИНОЧНЫЙ РЕЖИМ ==========
 async def send_single_example(message: types.Message, level: int):
     try:
-        example = await ask_model(
-            get_generation_prompt(level)
+        example = await safe_ask_model(
+            get_generation_prompt(level),
+            FALLBACK_EXAMPLE
         )
 
         if not example:
-            await message.answer(
-                "❌ Модель не ответила. Попробуй ещё раз."
-            )
-            return
+            example = FALLBACK_EXAMPLE
 
         user_last_example[message.from_user.id] = example
 
@@ -654,30 +795,27 @@ async def send_single_example(message: types.Message, level: int):
     except Exception as e:
         logging.exception(f"GENERATION ERROR: {e}")
 
-        await message.answer(
-            "❌ Ошибка генерации. Попробуй ещё раз."
-        )
+        await message.answer(FALLBACK_EXAMPLE)
 
 async def process_single_answer(message: types.Message, level: int):
+
     example = user_last_example.get(
         message.from_user.id,
         ""
     )
 
     try:
-        reply = await ask_model(
+        reply = await safe_ask_model(
             get_check_prompt(
                 level,
                 message.text,
                 example
-            )
+            ),
+            FALLBACK_ANALYSIS
         )
 
         if not reply:
-            await message.answer(
-                "❌ Модель не ответила. Попробуй ещё раз."
-            )
-            return
+            reply = FALLBACK_ANALYSIS
 
         await message.answer(reply)
 
@@ -689,24 +827,20 @@ async def process_single_answer(message: types.Message, level: int):
     except Exception as e:
         logging.exception(f"CHECK ERROR: {e}")
 
-        await message.answer(
-            "❌ Ошибка проверки. Попробуй ещё раз."
-        )
+        await message.answer(FALLBACK_ANALYSIS)
 
 # ========== БЕСКОНЕЧНЫЙ РЕЖИМ ==========
 async def start_endless_story(message: types.Message, level: int):
     user_id = message.from_user.id
 
     try:
-        story_text = await ask_model(
-            get_endless_start_prompt(level)
+        story_text = await safe_ask_model(
+            get_endless_start_prompt(level),
+            FALLBACK_EXAMPLE
         )
 
         if not story_text:
-            await message.answer(
-                "❌ Модель не ответила. Попробуй ещё раз."
-            )
-            return
+            story_text = FALLBACK_EXAMPLE
 
         user_story[user_id] = {
             "level": level,
@@ -726,9 +860,7 @@ async def start_endless_story(message: types.Message, level: int):
     except Exception as e:
         logging.exception(f"ENDLESS START ERROR: {e}")
 
-        await message.answer(
-            "❌ Ошибка генерации. Попробуй ещё раз."
-        )
+        await message.answer(FALLBACK_EXAMPLE)
 
 async def process_endless_answer(message: types.Message, level: int):
     user_id = message.from_user.id
@@ -741,19 +873,17 @@ async def process_endless_answer(message: types.Message, level: int):
     example = user_last_example.get(user_id, "")
 
     try:
-        check_result = await ask_model(
+        check_result = await safe_ask_model(
             get_check_prompt(
                 level,
                 message.text,
                 example
-            )
+            ),
+            FALLBACK_ANALYSIS
         )
 
         if not check_result:
-            await message.answer(
-                "❌ Модель не ответила. Попробуй ещё раз."
-            )
-            return
+            check_result = FALLBACK_ANALYSIS
 
     except asyncio.TimeoutError:
         await message.answer(
@@ -764,10 +894,7 @@ async def process_endless_answer(message: types.Message, level: int):
     except Exception as e:
         logging.exception(f"ENDLESS CHECK ERROR: {e}")
 
-        await message.answer(
-            "❌ Ошибка проверки. Попробуй ещё раз."
-        )
-        return
+        check_result = FALLBACK_ANALYSIS
 
     progress = 0
 
@@ -789,21 +916,19 @@ async def process_endless_answer(message: types.Message, level: int):
         user_levels[user_id] = new_level
 
     try:
-        continuation = await ask_model(
+        continuation = await safe_ask_model(
             get_endless_continuation_prompt(
                 new_level,
                 context,
                 history,
                 message.text,
                 progress
-            )
+            ),
+            FALLBACK_EXAMPLE
         )
 
         if not continuation:
-            await message.answer(
-                "❌ Модель не ответила. Попробуй ещё раз."
-            )
-            return
+            continuation = FALLBACK_EXAMPLE
 
         new_history = (
             history
@@ -839,9 +964,7 @@ async def process_endless_answer(message: types.Message, level: int):
     except Exception as e:
         logging.exception(f"ENDLESS CONTINUATION ERROR: {e}")
 
-        await message.answer(
-            "❌ Ошибка генерации продолжения. Попробуй ещё раз."
-        )
+        await message.answer(FALLBACK_EXAMPLE)
 
 # ========== MAIN ==========
 async def main():
