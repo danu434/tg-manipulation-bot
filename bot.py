@@ -326,10 +326,8 @@ async def start_webserver():
 # ========== МОДЕЛИ ==========
 MODELS = [
     "deepseek/deepseek-v4-flash:free",
-    "qwen/qwen3-next-80b-a3b-instruct:free",
-    "mistralai/mistral-7b-instruct:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemma-2-9b-it:free",
+    "google/gemma-4-31b:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
 ]
 
 # ========== FALLBACK ==========
@@ -358,7 +356,7 @@ async def ask_model(prompt: str):
 
         for model_name in models:
 
-            retries = 2
+            retries = 1
 
             for attempt in range(retries):
 
@@ -377,7 +375,7 @@ async def ask_model(prompt: str):
                             max_tokens=700,
                             temperature=0.8
                         ),
-                        timeout=45
+                        timeout=25
                     )
 
                     if not response:
