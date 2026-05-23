@@ -1,32 +1,39 @@
 import asyncio
+import logging
 import os
 
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from openai import AsyncOpenAI
 
-# =========================
+# ==========================================
 # НАСТРОЙКИ
-# =========================
+# ==========================================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 PORT = int(os.getenv("PORT", 10000))
 
-# =========================
-# OPENROUTER
-# =========================
+# ==========================================
+# ЛОГИ
+# ==========================================
+
+logging.basicConfig(level=logging.INFO)
+
+# ==========================================
+# OPENROUTER CLIENT
+# ==========================================
 
 client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
-# =========================
+# ==========================================
 # ТЕХНИКИ
-# =========================
+# ==========================================
 
 LEVEL_TECHNIQUES = {
     1: "Повышение голоса, ультиматум, прямая угроза, шантаж, запугивание",
@@ -40,9 +47,9 @@ LEVEL_TECHNIQUES = {
     9: "Манипуляция картиной мира, контроль мышления"
 }
 
-# =========================
-# ПРОМПТЫ
-# =========================
+# ==========================================
+# PROMPTS
+# ==========================================
 
 def get_generation_prompt(level):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
@@ -50,14 +57,14 @@ def get_generation_prompt(level):
     return f"""
 Ты — генератор учебных примеров манипуляций.
 
-Уровень сложности: {level}
+Уровень: {level}
 
 Техники:
 {techniques}
 
 Сгенерируй короткий реалистичный пример.
 
-Формат строго такой:
+Строгий формат:
 
 📋 Ситуация:
 ...
@@ -72,7 +79,7 @@ def get_check_prompt(level, user_answer):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
 
     return f"""
-Ты проверяющий в тренажёре манипуляций.
+Ты проверяющий тренажёра манипуляций.
 
 Уровень: {level}
 
@@ -89,9 +96,9 @@ def get_check_prompt(level, user_answer):
 💬 Оценка ответа:
 """
 
-# =========================
+# ==========================================
 # КЛАВИАТУРА
-# =========================
+# ==========================================
 
 def get_levels_keyboard():
     buttons = [
@@ -120,22 +127,22 @@ def get_levels_keyboard():
         resize_keyboard=True
     )
 
-# =========================
+# ==========================================
 # ХРАНЕНИЕ
-# =========================
+# ==========================================
 
 user_levels = {}
 
-# =========================
-# БОТ
-# =========================
+# ==========================================
+# BOT
+# ==========================================
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# =========================
+# ==========================================
 # WEB SERVER ДЛЯ RENDER
-# =========================
+# ==========================================
 
 async def health(request):
     return web.Response(text="OK")
@@ -156,9 +163,11 @@ async def start_webserver():
 
     await site.start()
 
-# =========================
+    print(f"WEB SERVER STARTED ON PORT {PORT}")
+
+# ==========================================
 # /start
-# =========================
+# ==========================================
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
@@ -169,13 +178,13 @@ async def start(message: types.Message):
         reply_markup=get_levels_keyboard()
     )
 
-# =========================
-# ПОМОЩЬ
-# =========================
+# ==========================================
+# HELP
+# ==========================================
 
 @dp.message(F.text == "📘 Как отвечать")
 async def help_handler(message: types.Message):
-    text = (
+    await message.answer(
         "Твоя задача:\n\n"
         "1. Найти манипулятивные техники\n"
         "2. Ответить манипулятору\n\n"
@@ -184,18 +193,16 @@ async def help_handler(message: types.Message):
         "Ответ: Я не согласен разговаривать в таком тоне."
     )
 
-    await message.answer(text)
-
-# =========================
+# ==========================================
 # ВЫБОР УРОВНЯ
-# =========================
+# ==========================================
 
 @dp.message(F.text.startswith("Уровень"))
 async def choose_level(message: types.Message):
     try:
         level = int(message.text.split()[1])
 
-        if level < 1 or level > 9:
+        if not 1 <= level <= 9:
             await message.answer("Уровень должен быть от 1 до 9")
             return
 
@@ -210,9 +217,9 @@ async def choose_level(message: types.Message):
     except Exception:
         await message.answer("Ошибка выбора уровня.")
 
-# =========================
-# ОБРАБОТКА ОТВЕТОВ
-# =========================
+# ==========================================
+# ПРОВЕРКА ОТВЕТА
+# ==========================================
 
 @dp.message()
 async def handle_answer(message: types.Message):
@@ -240,9 +247,9 @@ async def handle_answer(message: types.Message):
             f"❌ Ошибка проверки:\n{str(e)[:300]}"
         )
 
-# =========================
+# ==========================================
 # ГЕНЕРАЦИЯ ПРИМЕРА
-# =========================
+# ==========================================
 
 async def send_example(message: types.Message, level: int):
     try:
@@ -265,27 +272,35 @@ async def send_example(message: types.Message, level: int):
             f"❌ Ошибка генерации:\n{str(e)[:300]}"
         )
 
-# =========================
+# ==========================================
 # MAIN
-# =========================
+# ==========================================
 
 async def main():
     print("BOT STARTED")
 
+    # УДАЛЯЕМ WEBHOOK
     await bot.delete_webhook(
         drop_pending_updates=True
     )
 
+    # СТАРТ WEB SERVER
     await start_webserver()
 
+    # ЗАДЕРЖКА
+    await asyncio.sleep(2)
+
+    print("START POLLING")
+
+    # START POLLING
     await dp.start_polling(
         bot,
         skip_updates=True
     )
 
-# =========================
-# ЗАПУСК
-# =========================
+# ==========================================
+# START
+# ==========================================
 
 if __name__ == "__main__":
     asyncio.run(main())
