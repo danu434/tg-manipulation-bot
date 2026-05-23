@@ -20,7 +20,8 @@ PORT = int(os.getenv("PORT", 10000))
 # ========== КЛИЕНТ OPENROUTER ==========
 client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://openrouter.ai/api/v1",
+    max_retries=0
 )
 
 # ========== ТЕХНИКИ ПО УРОВНЯМ ==========
@@ -310,8 +311,8 @@ async def start_webserver():
 
 # ========== OPENROUTER HELPER ==========
 MODELS = [
-    "qwen/qwen3-next-80b-a3b-instruct:free",
     "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
     "deepseek/deepseek-v4-flash:free"
 ]
 
