@@ -31,15 +31,24 @@ LEVEL_TECHNIQUES = {
 }
 
 # ========== ХРАНЕНИЕ СОСТОЯНИЙ ==========
-user_mode = {}        # "single" или "endless"
-user_levels = {}      # текущий уровень
-user_last_example = {}# последний пример для проверки
-user_story = {}       # {user_id: {"level": 1, "context": "...", "history": "..."}}
+user_mode = {}
+user_levels = {}
+user_last_example = {}
+user_story = {}
 
 # ========== ПРОМПТЫ ==========
+RULES = """
+СТРОГИЕ ПРАВИЛА:
+- НЕ УКАЗЫВАЙ возраст участников
+- НЕ ИСПОЛЬЗУЙ имена (пиши "друг", "коллега", "партнёр", "сестра")
+- НЕ ДОБАВЛЯЙ лишних деталей (погода, внешность, время суток)
+- Только то, что нужно для манипуляции
+"""
+
 def get_generation_prompt(level):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
     return f"""Ты — генератор учебных примеров манипуляций для тренажёра.
+{RULES}
 
 Уровень сложности: {level}
 Разрешённые техники этого уровня: {techniques}
@@ -83,6 +92,7 @@ def get_generation_prompt(level):
 def get_endless_start_prompt(level):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
     return f"""Ты — генератор НАЧАЛА сюжетной линии для бесконечного режима.
+{RULES}
 
 Уровень сложности: {level}
 Разрешённые техники: {techniques}
@@ -108,6 +118,7 @@ def get_endless_start_prompt(level):
 def get_endless_continuation_prompt(level, story_context, story_history, user_answer, progress):
     techniques = LEVEL_TECHNIQUES.get(level, LEVEL_TECHNIQUES[1])
     return f"""Ты — генератор ПРОДОЛЖЕНИЯ манипулятивной истории.
+{RULES}
 
 КОНТЕКСТ ИСТОРИИ:
 {story_context}
@@ -170,21 +181,36 @@ def get_check_prompt(level, user_answer, example_text):
 Пиши дружелюбно, без жёсткости. Если ответ хороший — похвали. Если что-то пропущено — подскажи аккуратно."""
 
 # ========== КЛАВИАТУРЫ ==========
-def get_mode_keyboard():
+def get_main_menu():
     buttons = [
-        [KeyboardButton(text="🎯 Одиночный"), KeyboardButton(text="♾️ Бесконечный")]
+        [KeyboardButton(text="🎯 Режимы"), KeyboardButton(text="📊 Уровни")],
+        [KeyboardButton(text="📘 Как отвечать")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-def get_levels_keyboard(is_endless=False):
+def get_mode_menu():
+    buttons = [
+        [KeyboardButton(text="🎯 Одиночный"), KeyboardButton(text="♾️ Бесконечный")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_levels_menu():
     buttons = [
         [KeyboardButton(text="Уровень 1"), KeyboardButton(text="Уровень 2"), KeyboardButton(text="Уровень 3")],
         [KeyboardButton(text="Уровень 4"), KeyboardButton(text="Уровень 5"), KeyboardButton(text="Уровень 6")],
         [KeyboardButton(text="Уровень 7"), KeyboardButton(text="Уровень 8"), KeyboardButton(text="Уровень 9")],
-        [KeyboardButton(text="🔄 Сменить уровень"), KeyboardButton(text="📘 Как отвечать")]
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_game_keyboard(is_endless=False):
+    buttons = [
+        [KeyboardButton(text="🔄 Сменить уровень"), KeyboardButton(text="📘 Как отвечать")],
+        [KeyboardButton(text="⬅️ В главное меню")]
     ]
     if is_endless:
-        buttons.append([KeyboardButton(text="⏹ Завершить")])
+        buttons.insert(0, [KeyboardButton(text="⏹ Завершить")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 # ========== ТЕКСТ ИНСТРУКЦИИ ==========
@@ -241,39 +267,51 @@ async def start_webserver():
     site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
     await site.start()
 
-# ========== ХЭНДЛЕРЫ ==========
+# ========== ХЭНДЛЕРЫ НАВИГАЦИИ ==========
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = message.from_user.id
     user_mode[user_id] = None
     user_levels[user_id] = 1
     await message.answer(
-        "👋 Привет! Это тренажёр распознавания манипуляций.\n\nВыбери режим:",
-        reply_markup=get_mode_keyboard()
+        "👋 Привет! Это тренажёр распознавания манипуляций.\n\nВыбери раздел:",
+        reply_markup=get_main_menu()
     )
 
 @dp.message(Command("menu"))
 async def menu(message: types.Message):
-    user_id = message.from_user.id
-    mode = user_mode.get(user_id)
-    if mode is None:
-        await message.answer("Выбери режим:", reply_markup=get_mode_keyboard())
-    else:
-        is_endless = mode == "endless"
-        await message.answer("Выбери уровень:", reply_markup=get_levels_keyboard(is_endless))
+    await message.answer("Выбери раздел:", reply_markup=get_main_menu())
+
+@dp.message(F.text == "⬅️ Назад")
+@dp.message(F.text == "⬅️ В главное меню")
+async def back_to_main(message: types.Message):
+    await message.answer("Главное меню:", reply_markup=get_main_menu())
+
+@dp.message(F.text == "🎯 Режимы")
+async def modes_menu(message: types.Message):
+    await message.answer("Выбери режим:", reply_markup=get_mode_menu())
+
+@dp.message(F.text == "📊 Уровни")
+async def levels_menu(message: types.Message):
+    await message.answer("Выбери уровень:", reply_markup=get_levels_menu())
 
 @dp.message(F.text == "📘 Как отвечать")
 async def help_handler(message: types.Message):
     await message.answer(HELP_TEXT)
 
+@dp.message(F.text == "🔄 Сменить уровень")
+async def change_level(message: types.Message):
+    await message.answer("Выбери новый уровень:", reply_markup=get_levels_menu())
+
+# ========== ВЫБОР РЕЖИМА ==========
 @dp.message(F.text == "🎯 Одиночный")
 async def set_single_mode(message: types.Message):
     user_id = message.from_user.id
     user_mode[user_id] = "single"
     user_levels[user_id] = 1
     await message.answer(
-        "🎯 Одиночный режим. Выбери уровень:",
-        reply_markup=get_levels_keyboard(is_endless=False)
+        "🎯 Одиночный режим.\n\nВыбери уровень:",
+        reply_markup=get_levels_menu()
     )
 
 @dp.message(F.text == "♾️ Бесконечный")
@@ -284,7 +322,7 @@ async def set_endless_mode(message: types.Message):
     user_story[user_id] = {"level": 1, "context": "", "history": ""}
     await message.answer(
         "♾️ Бесконечный режим.\n\nМанипулятор будет повышать ставки.\nУспешный ответ — переход на уровень выше.\n\nВыбери стартовый уровень:",
-        reply_markup=get_levels_keyboard(is_endless=True)
+        reply_markup=get_levels_menu()
     )
 
 @dp.message(F.text == "⏹ Завершить")
@@ -294,17 +332,11 @@ async def stop_endless(message: types.Message):
     if user_id in user_story:
         del user_story[user_id]
     await message.answer(
-        "⏹ Бесконечный режим завершён.\n\nВыбери режим:",
-        reply_markup=get_mode_keyboard()
+        "⏹ Бесконечный режим завершён.\n\nГлавное меню:",
+        reply_markup=get_main_menu()
     )
 
-@dp.message(F.text == "🔄 Сменить уровень")
-async def change_level(message: types.Message):
-    user_id = message.from_user.id
-    mode = user_mode.get(user_id, "single")
-    is_endless = mode == "endless"
-    await message.answer("Выбери новый уровень:", reply_markup=get_levels_keyboard(is_endless))
-
+# ========== ВЫБОР УРОВНЯ ==========
 @dp.message(F.text.startswith("Уровень"))
 async def choose_level(message: types.Message):
     user_id = message.from_user.id
@@ -320,20 +352,31 @@ async def choose_level(message: types.Message):
         user_levels[user_id] = level
         mode = user_mode.get(user_id, "single")
         
+        if mode is None:
+            await message.answer("Сначала выбери режим в разделе 🎯 Режимы")
+            return
+        
+        is_endless = mode == "endless"
+        
         if mode == "endless":
-            await message.answer(f"✅ Уровень {level}. Запускаю бесконечный режим...")
+            await message.answer(f"✅ Уровень {level}. Запускаю бесконечный режим...", reply_markup=get_game_keyboard(True))
             await start_endless_story(message, level)
         else:
-            await message.answer(f"✅ Уровень {level}. Генерирую пример...")
+            await message.answer(f"✅ Уровень {level}. Генерирую пример...", reply_markup=get_game_keyboard(False))
             await send_single_example(message, level)
     except:
         pass
 
+# ========== ОБРАБОТКА ОТВЕТОВ ==========
 @dp.message()
 async def handle_answer(message: types.Message):
     user_id = message.from_user.id
     mode = user_mode.get(user_id, "single")
     level = user_levels.get(user_id, 1)
+    
+    if mode is None:
+        await message.answer("Сначала выбери режим в разделе 🎯 Режимы")
+        return
     
     await message.answer("🔍 Анализирую твой ответ...")
     
@@ -396,7 +439,6 @@ async def process_endless_answer(message: types.Message, level: int):
     history = story.get("history", "")
     example = user_last_example.get(user_id, "")
     
-    # Сначала проверяем ответ
     try:
         response = await client.chat.completions.create(
             model="deepseek/deepseek-chat",
@@ -410,7 +452,6 @@ async def process_endless_answer(message: types.Message, level: int):
         await message.answer("❌ Ошибка проверки. Попробуй ещё раз.")
         return
     
-    # Извлекаем прогресс из ответа
     progress = 0
     for line in check_result.split("\n"):
         if "Прогресс" in line or "📊" in line:
@@ -422,13 +463,11 @@ async def process_endless_answer(message: types.Message, level: int):
     
     await message.answer(check_result)
     
-    # Определяем новый уровень
     new_level = level
     if progress > 60:
         new_level = min(level + 1, 9)
         user_levels[user_id] = new_level
     
-    # Генерируем продолжение
     try:
         response = await client.chat.completions.create(
             model="deepseek/deepseek-chat",
@@ -441,7 +480,6 @@ async def process_endless_answer(message: types.Message, level: int):
         )
         continuation = response.choices[0].message.content
         
-        # Обновляем историю
         new_history = history + "\n\n👤 Жертва: " + message.text + "\n" + continuation
         user_story[user_id] = {
             "level": new_level,
