@@ -325,11 +325,11 @@ async def start_webserver():
 
 # ========== МОДЕЛИ ==========
 MODELS = [
-    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-v4-flash:free",
     "qwen/qwen3-next-80b-a3b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
     "google/gemma-2-9b-it:free",
-    "deepseek/deepseek-chat-v3-0324:free"
 ]
 
 # ========== FALLBACK ==========
