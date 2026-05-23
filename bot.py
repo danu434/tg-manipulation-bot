@@ -203,13 +203,14 @@ def get_levels_menu():
 
 def get_game_keyboard(is_endless=False):
     buttons = [
-        [KeyboardButton(text="🔄 Сменить уровень"), KeyboardButton(text="📘 Как отвечать")],
+        [KeyboardButton(text="🔄 Сменить уровень")],
         [KeyboardButton(text="⬅️ В главное меню")]
     ]
     if is_endless:
         buttons.insert(0, [KeyboardButton(text="⏹ Завершить")])
+    else:
+        buttons.insert(0, [KeyboardButton(text="▶️ Продолжить")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
 # ========== ТЕКСТ ИНСТРУКЦИИ ==========
 HELP_TEXT = """📘 КАК РАБОТАТЬ С ПРИМЕРАМИ
 
@@ -363,7 +364,18 @@ async def choose_level(message: types.Message):
             await send_single_example(message, level)
     except:
         pass
-
+@dp.message(F.text == "▶️ Продолжить")
+async def continue_single(message: types.Message):
+    user_id = message.from_user.id
+    mode = user_mode.get(user_id)
+    level = user_levels.get(user_id, 1)
+    
+    if mode != "single":
+        await message.answer("Эта кнопка только для одиночного режима")
+        return
+    
+    await message.answer(f"✅ Уровень {level}. Генерирую новый пример...")
+    await send_single_example(message, level)
 # ========== ОБРАБОТКА ОТВЕТОВ ==========
 @dp.message()
 async def handle_answer(message: types.Message):
