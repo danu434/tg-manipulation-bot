@@ -4,7 +4,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-import google.generativeai as genai
+from google import genai
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -12,8 +12,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PORT = int(os.getenv("PORT", 10000))
 
 # ========== КЛИЕНТ GEMINI ==========
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ========== ТЕХНИКИ ПО УРОВНЯМ ==========
 LEVEL_TECHNIQUES = {
@@ -216,7 +215,10 @@ async def handle_answer(message: types.Message):
     prompt = get_check_prompt(level, message.text)
     
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=prompt
+)
         reply = response.text
         await message.answer(reply)
     except Exception as e:
@@ -225,7 +227,10 @@ async def handle_answer(message: types.Message):
 async def send_manipulation_example(message: types.Message, level: int):
     prompt = get_generation_prompt(level)
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=prompt
+)
         example = response.text
         await message.answer(example)
     except Exception as e:
